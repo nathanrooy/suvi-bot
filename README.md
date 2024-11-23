@@ -1,1 +1,1 @@
-# suvi-bot
+<img src="cover.jpg">
