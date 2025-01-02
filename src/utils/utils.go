@@ -15,6 +15,8 @@ import (
 	"github.com/disintegration/imaging"
 )
 
+const JPEGQuality int = 80
+
 type Post struct {
 	ImgBuf      bytes.Buffer
 	Description string
@@ -80,14 +82,14 @@ func treatImage(buf *bytes.Buffer, save bool) *bytes.Buffer {
 
 	// dev only
 	if save {
-		err = imaging.Save(img, "image.jpg")
+		err = imaging.Save(img, "image.jpg", imaging.JPEGQuality(JPEGQuality))
 		if err != nil {
 			fmt.Println("Error saving image:", err)
 		}
 	}
 
 	buf = new(bytes.Buffer)
-	err = imaging.Encode(buf, img, imaging.PNG)
+	err = imaging.Encode(buf, img, imaging.JPEG, imaging.JPEGQuality(JPEGQuality))
 	if err != nil {
 		log.Println("> Error encoding image:", err)
 	}

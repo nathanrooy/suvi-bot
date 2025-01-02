@@ -6,12 +6,27 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"suvi/src/utils"
 	"time"
 )
 
 const PDS_URL string = "https://bsky.social"
+
+type Records struct {
+	Cursor  string   `json:"cursor"`
+	Records []Record `json:"records"`
+}
+
+type Record struct {
+	CID   string `json:"cid"`
+	URI   string `json:"uri"`
+	Value struct {
+		CreatedAT string `json:"createdAt"`
+	} `json:"value"`
+}
 
 type Session struct {
 	DID       string `json:"did"`
@@ -185,7 +200,7 @@ func _post(s Session, p utils.Post) {
 
 	postJSON, err := json.Marshal(post)
 	if err != nil {
-		log.Println("> Error marshalling JSONL", err)
+		log.Println("> Error marshalling JSON", err)
 	}
 
 	req, err := http.NewRequest(
@@ -215,13 +230,102 @@ func _post(s Session, p utils.Post) {
 	}
 }
 
+func _deleteRecord(s Session, r Record) {
+
+	log.Printf("> Purging: %v\n", r.URI)
+	uri := strings.Split(r.URI, "/")
+	rkey := uri[len(uri)-1]
+
+	payload := map[string]string{
+		"repo":       s.DID,
+		"collection": "app.bsky.feed.post",
+		"rkey":       rkey,
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		log.Println("> Error marshalling JSON", err)
+	}
+
+	req, err := http.NewRequest(
+		"POST",
+		PDS_URL+"/xrpc/com.atproto.repo.deleteRecord",
+		bytes.NewBuffer(payloadJSON),
+	)
+	if err != nil {
+		log.Println("> Error creating request:", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.AccessJWT)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println("> Error sending request:", err)
+	}
+	defer resp.Body.Close()
+
+	log.Println("> BSKY delete post response code:", resp.StatusCode)
+
+	_, err = io.ReadAll(resp.Body)
+	if err != nil {
+		log.Println("> Error reading response body:", err)
+	}
+}
+
 func _purge(s Session) {
 
+	u, err := url.Parse(PDS_URL + "/xrpc/com.atproto.repo.listRecords")
+	if err != nil {
+		log.Println("> Error parsing URL:", err)
+	}
+
+	q := u.Query()
+	q.Set("repo", s.DID)
+	q.Set("collection", "app.bsky.feed.post")
+	q.Set("limit", "25")
+	q.Set("reverse", "true") // only get the 25 oldest posts
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		log.Println("> Error creating request:", err)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println("> Error sending request:", err)
+	}
+	defer resp.Body.Close()
+
+	log.Println("> BSKY listRecords response code:", resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Println("> Error reading response body:", err)
+	}
+
+	var records Records
+	err = json.Unmarshal(body, &records)
+	if err != nil {
+		log.Println("> Error marshalling json response:", err)
+	}
+
+	for i := 0; i < len(records.Records); i++ {
+		t_post, _ := time.Parse(time.RFC3339, records.Records[i].Value.CreatedAT)
+		t_delta := time.Now().UTC().Sub(t_post).Seconds()
+		if t_delta >= 90*24*3600 {
+			_deleteRecord(s, records.Records[i])
+		}
+	}
 }
 
 func Run(p utils.Post) {
 
 	s := _login()
 	_post(s, p)
+	_purge(s)
 
 }
